@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Space Shooter: Epic Edition</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #050505;
+            overflow: hidden;
+            touch-action: none;
+            font-family: 'Courier New', Courier, monospace;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            width: 100vw;
+        }
+
+        #game-container {
+            position: relative;
+            max-height: 70vh; 
+            aspect-ratio: 3/4; 
+            background: black;
+            border: 2px solid #333;
+            box-shadow: 0 0 50px rgba(0,255,255,0.2);
+        }
+
+        canvas { width: 100%; height: 100%; display: block; }
+
+        .controls-wrapper {
+            display: flex;
+            width: 100%;
+            max-width: 400px;
+            justify-content: space-around;
+            align-items: center;
+            padding: 20px 0;
+            z-index: 10;
+        }
+
+        .btn {
+            width: 70px; height: 70px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.1);
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            color: white; font-size: 30px;
+            display: flex; justify-content: center; align-items: center;
+            backdrop-filter: blur(5px);
+            user-select: none; cursor: pointer;
+        }
+        
+        .btn:active { background: rgba(0, 255, 255, 0.4); transform: scale(0.95); }
+
+        .btn-shoot {
+            width: 85px; height: 85px;
+            background: rgba(255, 50, 50, 0.2);
+            border-color: rgba(255, 80, 80, 0.6);
+            font-size: 40px;
+        }
+
+        @media (orientation: landscape) {
+            body { flex-direction: row; }
+            #game-container { max-height: 95vh; }
+            .controls-wrapper { flex-direction: row; width: auto; gap: 40px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <div class="controls-wrapper">
+        <div style="display:flex; gap:15px">
+            <div class="btn" id="leftBtn">◀</div>
+            <div class="btn" id="rightBtn">▶</div>
+        </div>
+        <div class="btn btn-shoot" id="shootBtn">🔥</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        canvas.width = 400; canvas.height = 600;
+        const W = canvas.width, H = canvas.height;
+
+        // --- Variabel Game ---
+        let player = { x: W/2 - 25, y: H - 80, w: 50, h: 50 };
+        let bullets = [], enemies = [], powerups = [], particles = [];
+        let score = 0, lives = 10, gameOver = false, gameWin = false;
+        let weaponLevel = 1, weaponTimer = 0;
+        const MAX_WEAPON_TIMER = 500; // Durasi power-up
+        let enemySpeed = 3.0;
+        let isBursting = false;
+        let keys = { left: false, right: false };
+
+        function createParticles(x, y, color, count) {
+            for(let i=0; i<count; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random()-0.5)*10,
+                    vy: (Math.random()-0.5)*10,
+                    life: 1.0,
+                    color: color
+                });
+            }
+        }
+
+        function update() {
+            if (gameOver || gameWin) {
+                if(gameWin) { // Animasi kembang api terus menerus
+                    if(Math.random() < 0.1) createParticles(Math.random()*W, Math.random()*H, `hsl(${Math.random()*360}, 100%, 50%)`, 20);
+                }
+                updateParticles();
+                return;
+            }
+
+            // Gerak
+            if (keys.left && player.x > 0) player.x -= 7;
+            if (keys.right && player.x < W - player.w) player.x += 7;
+
+            // Weapon Timer (Pengurangan Bonus)
+            if (weaponLevel > 1) {
+                weaponTimer--;
+                if (weaponTimer <= 0) {
+                    weaponLevel--;
+                    weaponTimer = (weaponLevel > 1) ? MAX_WEAPON_TIMER : 0;
+                }
+            }
+
+            // Victory Check
+            if (score >= 100000) {
+                gameWin = true;
+                createParticles(W/2, H/2, "cyan", 100);
+            }
+
+            // Bullets
+            bullets.forEach((b, i) => {
+                b.y -= 10; b.x += b.dx || 0;
+                if (b.y < 0) bullets.splice(i, 1);
+            });
+
+            // Enemies
+            if (Math.random() < 0.03) enemies.push({ x: Math.random()*(W-40), y: -40, w: 40, h: 40 });
+            enemies.forEach((e, i) => {
+                e.y += enemySpeed;
+                if (rectIntersect(player, e)) { lives--; enemies.splice(i, 1); checkStatus(); }
+                else if (e.y > H) { lives--; enemies.splice(i, 1); checkStatus(); }
+                
+                bullets.forEach((b, j) => {
+                    if (rectIntersect(b, e)) {
+                        createParticles(e.x+20, e.y+20, "red", 8);
+                        enemies.splice(i, 1); bullets.splice(j, 1);
+                        score += 100;
+                        enemySpeed += 0.005;
+                    }
+                });
+            });
+
+            // Powerups
+            if (Math.random() < 0.003) powerups.push({ x: Math.random()*(W-30), y: -30, w: 30, h: 30 });
+            powerups.forEach((p, i) => {
+                p.y += 2;
+                if (rectIntersect(player, p)) {
+                    powerups.splice(i, 1);
+                    if (weaponLevel < 4) weaponLevel++;
+                    weaponTimer = MAX_WEAPON_TIMER;
+                    createParticles(player.x+25, player.y, "cyan", 15);
+                }
+            });
+
+            updateParticles();
+        }
+
+        function updateParticles() {
+            particles.forEach((p, i) => {
+                p.x += p.vx; p.y += p.vy; p.life -= 0.02;
+                if(p.life <= 0) particles.splice(i, 1);
+            });
+        }
+
+        function triggerShoot() {
+            if (isBursting || gameOver || gameWin) return;
+            isBursting = true;
+            
+            const fire = () => {
+                const bx = player.x + 23;
+                if (weaponLevel === 1) bullets.push({ x: bx, y: player.y, w:5, h:15 });
+                if (weaponLevel === 2) {
+                    bullets.push({ x: player.x+10, y: player.y, w:5, h:15 });
+                    bullets.push({ x: player.x+35, y: player.y, w:5, h:15 });
+                }
+                if (weaponLevel === 3) {
+                    bullets.push({ x: bx, y: player.y, w:5, h:15, dx: 0 });
+                    bullets.push({ x: bx, y: player.y, w:5, h:15, dx: -3 });
+                    bullets.push({ x: bx, y: player.y, w:5, h:15, dx: 3 });
+                }
+                if (weaponLevel >= 4) {
+                    [-4, -2, 0, 2, 4].forEach(dx => bullets.push({ x: bx, y: player.y, w:5, h:15, dx }));
+                }
+            };
+
+            fire();
+            setTimeout(() => { isBursting = false; }, 150);
+        }
+
+        function draw() {
+            ctx.fillStyle = "#050505"; ctx.fillRect(0, 0, W, H);
+            
+            // Player
+            ctx.fillStyle = "cyan";
+            ctx.beginPath();
+            ctx.moveTo(player.x+25, player.y); ctx.lineTo(player.x+50, player.y+50);
+            ctx.lineTo(player.x+25, player.y+40); ctx.lineTo(player.x, player.y+50);
+            ctx.fill();
+
+            // Objek
+            ctx.fillStyle = "yellow"; bullets.forEach(b => ctx.fillRect(b.x, b.y, b.w, b.h));
+            ctx.fillStyle = "red"; enemies.forEach(e => ctx.fillRect(e.x, e.y, e.w, e.h));
+            ctx.fillStyle = "lime"; powerups.forEach(p => {
+                ctx.beginPath(); ctx.arc(p.x+15, p.y+15, 12, 0, Math.PI*2); ctx.fill();
+            });
+
+            // Partikel
+            particles.forEach(p => {
+                ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, 3, 3);
+            });
+            ctx.globalAlpha = 1;
+
+            // HUD
+            ctx.fillStyle = "white"; ctx.font = "bold 16px Courier";
+            ctx.fillText("SCORE: " + score, 10, 30);
+            ctx.fillText("HP: " + lives, W-70, 30);
+            
+            // Bar Weapon Timer
+            if (weaponLevel > 1) {
+                ctx.fillStyle = "#333"; ctx.fillRect(10, 45, 100, 8);
+                ctx.fillStyle = "cyan"; ctx.fillRect(10, 45, (weaponTimer/MAX_WEAPON_TIMER)*100, 8);
+                ctx.font = "10px Arial"; ctx.fillText("LV." + weaponLevel, 115, 53);
+            }
+
+            if (gameOver) {
+                ctx.fillStyle = "red"; ctx.textAlign = "center"; ctx.font = "40px Courier";
+                ctx.fillText("GAME OVER", W/2, H/2);
+            }
+            if (gameWin) {
+                ctx.fillStyle = "cyan"; ctx.textAlign = "center"; ctx.font = "40px Courier";
+                ctx.fillText("YOU WIN!", W/2, H/2 - 20);
+                ctx.font = "20px Courier"; ctx.fillText("SKOR FANTASTIS!", W/2, H/2 + 20);
+            }
+            ctx.textAlign = "left";
+        }
+
+        function rectIntersect(r1, r2) {
+            let w1=r1.w||5, h1=r1.h||15, w2=r2.w||40, h2=r2.h||40;
+            return !(r2.x>r1.x+w1 || r2.x+w2<r1.x || r2.y>r1.y+h1 || r2.y+h2<r1.y);
+        }
+        function checkStatus() { if(lives<=0) gameOver=true; }
+        
+        function loop() { update(); draw(); requestAnimationFrame(loop); }
+        loop();
+
+        // Input
+        const setupBtn = (id, start, end) => {
+            const btn = document.getElementById(id);
+            btn.addEventListener('touchstart', (e) => { e.preventDefault(); start(); });
+            btn.addEventListener('touchend', (e) => { e.preventDefault(); end(); });
+            btn.addEventListener('mousedown', start); btn.addEventListener('mouseup', end);
+        };
+        setupBtn('leftBtn', () => keys.left=true, () => keys.left=false);
+        setupBtn('rightBtn', () => keys.right=true, () => keys.right=false);
+        setupBtn('shootBtn', () => { if(gameOver || gameWin) location.reload(); else triggerShoot(); }, () => {});
+    </script>
+</body>
+</html>
